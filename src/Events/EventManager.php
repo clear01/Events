@@ -14,6 +14,29 @@ use Closure;
 use Doctrine\Common\EventArgs as DoctrineEventArgs;
 use Doctrine\Common\EventSubscriber;
 use Kdyby\Events\Diagnostics\Panel;
+use function array_fill_keys;
+use function array_filter;
+use function array_keys;
+use function array_map;
+use function array_merge;
+use function assert;
+use function call_user_func;
+use function call_user_func_array;
+use function class_exists;
+use function count;
+use function get_class;
+use function get_parent_class;
+use function in_array;
+use function is_array;
+use function is_callable;
+use function is_numeric;
+use function is_object;
+use function is_string;
+use function krsort;
+use function ltrim;
+use function method_exists;
+use function spl_object_hash;
+use function sprintf;
 
 /**
  * Registry of system-wide listeners that get's invoked, when the event, that they are listening to, is dispatched.
@@ -21,359 +44,359 @@ use Kdyby\Events\Diagnostics\Panel;
 class EventManager extends \Doctrine\Common\EventManager
 {
 
-	/**
-	 * [Event => [Priority => [[Listener, method], Subscriber, Subscriber, ...]]]
-	 *
-	 * @var array<string, array<int, callable[]>>
-	 */
-	private $listeners = [];
+    /**
+     * [Event => [Priority => [[Listener, method], Subscriber, Subscriber, ...]]]
+     *
+     * @var array<string, array<int, callable[]>>
+     */
+    private $listeners = [];
 
-	/**
-	 * [Event => Subscriber|callable]
-	 *
-	 * @var array<\Doctrine\Common\EventSubscriber[]|callable[]>
-	 */
-	private $sorted = [];
+    /**
+     * [Event => Subscriber|callable]
+     *
+     * @var array<\Doctrine\Common\EventSubscriber[]|callable[]>
+     */
+    private $sorted = [];
 
-	/**
-	 * [SubscriberHash => Subscriber]
-	 *
-	 * @var array<string, \Doctrine\Common\EventSubscriber>
-	 */
-	private $subscribers = [];
+    /**
+     * [SubscriberHash => Subscriber]
+     *
+     * @var array<string, \Doctrine\Common\EventSubscriber>
+     */
+    private $subscribers = [];
 
-	/**
-	 * @var \Kdyby\Events\Diagnostics\Panel|null
-	 */
-	private $panel;
+    /**
+     * @var \Kdyby\Events\Diagnostics\Panel|null
+     */
+    private $panel;
 
-	/**
-	 * @var \Kdyby\Events\IExceptionHandler|null
-	 */
-	private $exceptionHandler;
+    /**
+     * @var \Kdyby\Events\IExceptionHandler|null
+     */
+    private $exceptionHandler;
 
-	/**
-	 * @internal
-	 * @param \Kdyby\Events\Diagnostics\Panel $panel
-	 */
-	public function setPanel(Panel $panel)
-	{
-		$this->panel = $panel;
-	}
+    /**
+     * @internal
+     * @param \Kdyby\Events\Diagnostics\Panel $panel
+     */
+    public function setPanel(Panel $panel)
+    {
+        $this->panel = $panel;
+    }
 
-	/**
-	 * @param \Kdyby\Events\IExceptionHandler $exceptionHandler
-	 */
-	public function setExceptionHandler(IExceptionHandler $exceptionHandler)
-	{
-		$this->exceptionHandler = $exceptionHandler;
-	}
+    /**
+     * @param \Kdyby\Events\IExceptionHandler $exceptionHandler
+     */
+    public function setExceptionHandler(IExceptionHandler $exceptionHandler)
+    {
+        $this->exceptionHandler = $exceptionHandler;
+    }
 
-	/**
-	 * Dispatches an event to all registered listeners.
-	 *
-	 * @param string $eventName The name of the event to dispatch. The name of the event is the name of the method that is invoked on listeners.
-	 * @param \Doctrine\Common\EventArgs $eventArgs The event arguments to pass to the event handlers/listeners. If not supplied, the single empty EventArgs instance is used
-	 */
-	public function dispatchEvent($eventName, DoctrineEventArgs $eventArgs = NULL)
-	{
-		if ($this->panel) {
-			$this->panel->eventDispatch($eventName, $eventArgs);
-		}
+    /**
+     * Dispatches an event to all registered listeners.
+     *
+     * @param string $eventName The name of the event to dispatch. The name of the event is the name of the method that is invoked on listeners.
+     * @param \Doctrine\Common\EventArgs $eventArgs The event arguments to pass to the event handlers/listeners. If not supplied, the single empty EventArgs instance is used
+     */
+    public function dispatchEvent(string $eventName, DoctrineEventArgs $eventArgs = NULL): void
+    {
+        if ($this->panel) {
+            $this->panel->eventDispatch($eventName, $eventArgs);
+        }
 
-		[, $event] = Event::parseName($eventName);
-		foreach ($this->getListeners($eventName) as $listener) {
-			try {
-				if ($listener instanceof EventSubscriber) {
-					$listener = [$listener, $event];
-				}
+        [, $event] = Event::parseName($eventName);
+        foreach ($this->getListeners($eventName) as $listener) {
+            try {
+                if ($listener instanceof EventSubscriber) {
+                    $listener = [$listener, $event];
+                }
 
-				assert(is_callable($listener));
+                assert(is_callable($listener));
 
-				if ($eventArgs instanceof EventArgsList) {
-					/** @var \Kdyby\Events\EventArgsList $eventArgs */
-					call_user_func_array($listener, $eventArgs->getArgs());
+                if ($eventArgs instanceof EventArgsList) {
+                    /** @var \Kdyby\Events\EventArgsList $eventArgs */
+                    call_user_func_array($listener, \array_values($eventArgs->getArgs()));
 
-				} else {
-					call_user_func($listener, $eventArgs);
-				}
+                } else {
+                    call_user_func($listener, $eventArgs);
+                }
 
-			} catch (\Exception $e) {
-				if ($this->exceptionHandler) {
-					$this->exceptionHandler->handleException($e);
-				} else {
-					throw $e;
-				}
-			}
-		}
+            } catch (\Exception $e) {
+                if ($this->exceptionHandler) {
+                    $this->exceptionHandler->handleException($e);
+                } else {
+                    throw $e;
+                }
+            }
+        }
 
-		if ($this->panel) {
-			$this->panel->eventDispatched($eventName, $eventArgs);
-		}
-	}
+        if ($this->panel) {
+            $this->panel->eventDispatched($eventName, $eventArgs);
+        }
+    }
 
-	/**
-	 * Gets the listeners of a specific event or all listeners.
-	 *
-	 * @param string|null $eventName
-	 * @return \Doctrine\Common\EventSubscriber[]|callable[]|\Doctrine\Common\EventSubscriber[][]|callable[][]
-	 */
-	public function getListeners($eventName = NULL)
-	{
-		if ($eventName !== NULL) {
-			if (!isset($this->sorted[$eventName])) {
-				$this->sortListeners($eventName);
-			}
+    /**
+     * Gets the listeners of a specific event or all listeners.
+     *
+     * @param string|null $eventName
+     * @return \Doctrine\Common\EventSubscriber[]|callable[]|\Doctrine\Common\EventSubscriber[][]|callable[][]
+     */
+    public function getListeners($eventName = NULL): array
+    {
+        if ($eventName !== NULL) {
+            if (!isset($this->sorted[$eventName])) {
+                $this->sortListeners($eventName);
+            }
 
-			return $this->sorted[$eventName];
-		}
+            return $this->sorted[$eventName];
+        }
 
-		foreach (array_keys($this->listeners) as $event) {
-			if (!isset($this->sorted[$event])) {
-				$this->sortListeners($event);
-			}
-		}
+        foreach (array_keys($this->listeners) as $event) {
+            if (!isset($this->sorted[$event])) {
+                $this->sortListeners($event);
+            }
+        }
 
-		return array_filter($this->sorted);
-	}
+        return array_filter($this->sorted);
+    }
 
-	/**
-	 * Checks whether an event has any registered listeners.
-	 *
-	 * @param string|null $eventName
-	 * @return bool TRUE if the specified event has any listeners, FALSE otherwise.
-	 */
-	public function hasListeners($eventName)
-	{
-		return (bool) count($this->getListeners($eventName));
-	}
+    /**
+     * Checks whether an event has any registered listeners.
+     *
+     * @param string|null $eventName
+     * @return bool TRUE if the specified event has any listeners, FALSE otherwise.
+     */
+    public function hasListeners($eventName): bool
+    {
+        return (bool) count($this->getListeners($eventName));
+    }
 
-	/**
-	 * Adds an event listener that listens on the specified events.
-	 *
-	 * @param string|array $events The event(s) to listen on.
-	 * @param \Doctrine\Common\EventSubscriber|\Closure|array $subscriber The listener object.
-	 * @param int $priority
-	 * @throws \Kdyby\Events\InvalidListenerException
-	 */
-	public function addEventListener($events, $subscriber, $priority = 0)
-	{
-		foreach ((array) $events as $eventName) {
-			[, $event] = Event::parseName($eventName);
+    /**
+     * Adds an event listener that listens on the specified events.
+     *
+     * @param string|array $events The event(s) to listen on.
+     * @param \Doctrine\Common\EventSubscriber|\Closure|array $subscriber The listener object.
+     * @param int $priority
+     * @throws \Kdyby\Events\InvalidListenerException
+     */
+    public function addEventListener($events, $subscriber, $priority = 0): void
+    {
+        foreach ((array) $events as $eventName) {
+            [, $event] = Event::parseName($eventName);
 
-			if (!$subscriber instanceof Closure) {
-				$callback = !is_array($subscriber) ? [$subscriber, $event] : $subscriber;
-				if ($callback[0] instanceof CallableSubscriber) {
-					if (!is_callable($callback)) {
-						throw new \Kdyby\Events\InvalidListenerException(sprintf('Event listener "%s" is not callable.', get_class($callback[0])));
-					}
+            if (!$subscriber instanceof Closure) {
+                $callback = !is_array($subscriber) ? [$subscriber, $event] : $subscriber;
+                if ($callback[0] instanceof CallableSubscriber) {
+                    if (!is_callable($callback)) {
+                        throw new \Kdyby\Events\InvalidListenerException(sprintf('Event listener "%s" is not callable.', get_class($callback[0])));
+                    }
 
-				} elseif (!method_exists($callback[0], $callback[1])) {
-					throw new \Kdyby\Events\InvalidListenerException(sprintf('Event listener "%s" has no method "%s"', get_class($callback[0]), $callback[1]));
-				}
-			}
+                } elseif (!method_exists($callback[0], $callback[1])) {
+                    throw new \Kdyby\Events\InvalidListenerException(sprintf('Event listener "%s" has no method "%s"', get_class($callback[0]), $callback[1]));
+                }
+            }
 
-			$this->listeners[$eventName][$priority][] = $subscriber;
-			unset($this->sorted[$eventName]);
-		}
-	}
+            $this->listeners[$eventName][$priority][] = $subscriber;
+            unset($this->sorted[$eventName]);
+        }
+    }
 
-	/**
-	 * Removes an event listener from the specified events.
-	 *
-	 * @param \Doctrine\Common\EventSubscriber|\Closure|array|string $unsubscribe
-	 * @param \Doctrine\Common\EventSubscriber|\Closure|array $subscriber
-	 */
-	public function removeEventListener($unsubscribe, $subscriber = NULL)
-	{
-		if ($unsubscribe instanceof EventSubscriber) {
-			[$unsubscribe, $subscriber] = $this->extractSubscriber($unsubscribe);
-		} elseif ($unsubscribe instanceof Closure) {
-			[$unsubscribe, $subscriber] = $this->extractCallable($unsubscribe);
-		}
+    /**
+     * Removes an event listener from the specified events.
+     *
+     * @param \Doctrine\Common\EventSubscriber|\Closure|array|string $unsubscribe
+     * @param \Doctrine\Common\EventSubscriber|\Closure|array $subscriber
+     */
+    public function removeEventListener($unsubscribe, $subscriber = NULL): void
+    {
+        if ($unsubscribe instanceof EventSubscriber) {
+            [$unsubscribe, $subscriber] = $this->extractSubscriber($unsubscribe);
+        } elseif ($unsubscribe instanceof Closure) {
+            [$unsubscribe, $subscriber] = $this->extractCallable($unsubscribe);
+        }
 
-		foreach ((array) $unsubscribe as $eventName) {
-			$eventName = ltrim($eventName, '\\');
-			foreach ($this->listeners[$eventName] as $priority => $listeners) {
-				$key = NULL;
-				foreach ($listeners as $k => $listener) {
-					if (!($listener === $subscriber || (is_array($listener) && $listener[0] === $subscriber))) {
-						continue;
-					}
-					$key = $k;
-					break;
-				}
+        foreach ((array) $unsubscribe as $eventName) {
+            $eventName = ltrim($eventName, '\\');
+            foreach ($this->listeners[$eventName] as $priority => $listeners) {
+                $key = NULL;
+                foreach ($listeners as $k => $listener) {
+                    if (!($listener === $subscriber || (is_array($listener) && $listener[0] === $subscriber))) {
+                        continue;
+                    }
+                    $key = $k;
+                    break;
+                }
 
-				if ($key === NULL) {
-					continue;
-				}
+                if ($key === NULL) {
+                    continue;
+                }
 
-				unset($this->listeners[$eventName][$priority][$key]);
-				if (empty($this->listeners[$eventName][$priority])) {
-					unset($this->listeners[$eventName][$priority]);
-				}
-				if (empty($this->listeners[$eventName])) {
-					unset($this->listeners[$eventName]);
-					// there are no listeners for this specific event, so no reason to call sort on next dispatch
-					$this->sorted[$eventName] = [];
-				} else {
-					// otherwise it needs to be sorted again
-					unset($this->sorted[$eventName]);
-				}
-			}
-		}
-	}
+                unset($this->listeners[$eventName][$priority][$key]);
+                if (empty($this->listeners[$eventName][$priority])) {
+                    unset($this->listeners[$eventName][$priority]);
+                }
+                if (empty($this->listeners[$eventName])) {
+                    unset($this->listeners[$eventName]);
+                    // there are no listeners for this specific event, so no reason to call sort on next dispatch
+                    $this->sorted[$eventName] = [];
+                } else {
+                    // otherwise it needs to be sorted again
+                    unset($this->sorted[$eventName]);
+                }
+            }
+        }
+    }
 
-	/**
-	 * @param \Doctrine\Common\EventSubscriber $subscriber
-	 * @return array
-	 */
-	protected function extractSubscriber(EventSubscriber $subscriber)
-	{
-		$unsubscribe = [];
+    /**
+     * @param \Doctrine\Common\EventSubscriber $subscriber
+     * @return array
+     */
+    protected function extractSubscriber(EventSubscriber $subscriber)
+    {
+        $unsubscribe = [];
 
-		foreach ($subscriber->getSubscribedEvents() as $eventName => $params) {
-			if ((is_array($params) && is_array($params[0])) || !is_numeric($eventName)) {
-				// [EventName => [[method, priority], ...], ...]
-				// [EventName => [method, priority], ...] && [EventName => method, .
-				$unsubscribe[] = $eventName;
+        foreach ($subscriber->getSubscribedEvents() as $eventName => $params) {
+            if ((is_array($params) && is_array($params[0])) || !is_numeric($eventName)) {
+                // [EventName => [[method, priority], ...], ...]
+                // [EventName => [method, priority], ...] && [EventName => method, .
+                $unsubscribe[] = $eventName;
 
-			} else { // [EventName, ...]
-				$unsubscribe[] = $params;
-			}
-		}
+            } else { // [EventName, ...]
+                $unsubscribe[] = $params;
+            }
+        }
 
-		unset($this->subscribers[spl_object_hash($subscriber)]);
+        unset($this->subscribers[spl_object_hash($subscriber)]);
 
-		return [$unsubscribe, $subscriber];
-	}
+        return [$unsubscribe, $subscriber];
+    }
 
-	/**
-	 * @param callable $subscriber
-	 * @return array
-	 */
-	protected function extractCallable(callable $subscriber)
-	{
-		$unsubscribe = [];
+    /**
+     * @param callable $subscriber
+     * @return array
+     */
+    protected function extractCallable(callable $subscriber)
+    {
+        $unsubscribe = [];
 
-		foreach ($this->listeners as $event => $prioritized) {
-			foreach ($prioritized as $listeners) {
-				foreach ($listeners as $listener) {
-					if ($listener === $subscriber) {
-						$unsubscribe[] = $event;
-					}
-				}
-			}
-		}
+        foreach ($this->listeners as $event => $prioritized) {
+            foreach ($prioritized as $listeners) {
+                foreach ($listeners as $listener) {
+                    if ($listener === $subscriber) {
+                        $unsubscribe[] = $event;
+                    }
+                }
+            }
+        }
 
-		return [$unsubscribe, $subscriber];
-	}
+        return [$unsubscribe, $subscriber];
+    }
 
-	/**
-	 * {@inheritdoc}
-	 */
-	public function addEventSubscriber(EventSubscriber $subscriber)
-	{
-		$hash = spl_object_hash($subscriber);
-		if (isset($this->subscribers[$hash])) {
-			return;
-		}
-		$this->subscribers[$hash] = $subscriber;
+    /**
+     * {@inheritdoc}
+     */
+    public function addEventSubscriber(EventSubscriber $subscriber): void
+    {
+        $hash = spl_object_hash($subscriber);
+        if (isset($this->subscribers[$hash])) {
+            return;
+        }
+        $this->subscribers[$hash] = $subscriber;
 
-		foreach ($subscriber->getSubscribedEvents() as $eventName => $params) {
-			if ($params instanceof Closure) {
-				$this->addEventListener($eventName, $params);
-			} elseif (is_numeric($eventName) && is_string($params)) { // [EventName, ...]
-				$this->addEventListener($params, $subscriber);
+        foreach ($subscriber->getSubscribedEvents() as $eventName => $params) {
+            if (is_numeric($eventName) && is_string($params)) { // [EventName, ...]
+                $this->addEventListener($params, $subscriber);
 
-			} elseif (is_string($eventName)) { // [EventName => ???, ...]
-				if (is_string($params)) { // [EventName => method, ...]
-					$this->addEventListener($eventName, [$subscriber, $params]);
+            } elseif (is_string($eventName)) { // [EventName => ???, ...]
+                if ($params instanceof Closure) {
+                    $this->addEventListener($eventName, $params);
+                } elseif (is_string($params)) { // [EventName => method, ...]
+                    $this->addEventListener($eventName, [$subscriber, $params]);
 
-				} elseif (is_string($params[0])) { // [EventName => [method, priority], ...]
-					$this->addEventListener($eventName, [$subscriber, $params[0]], $params[1] ?? 0);
+                } elseif (is_string($params[0])) { // [EventName => [method, priority], ...]
+                    $this->addEventListener($eventName, [$subscriber, $params[0]], $params[1] ?? 0);
 
-				} else {
-					foreach ($params as $listener) { // [EventName => [[method, priority], ...], ...]
-						$this->addEventListener($eventName, [$subscriber, $listener[0]], $listener[1] ?? 0);
-					}
-				}
-			}
-		}
-	}
+                } else {
+                    foreach ($params as $listener) { // [EventName => [[method, priority], ...], ...]
+                        $this->addEventListener($eventName, [$subscriber, $listener[0]], $listener[1] ?? 0);
+                    }
+                }
+            }
+        }
+    }
 
-	/**
-	 * {@inheritdoc}
-	 */
-	public function removeEventSubscriber(EventSubscriber $subscriber)
-	{
-		$this->removeEventListener($subscriber);
-	}
+    /**
+     * {@inheritdoc}
+     */
+    public function removeEventSubscriber(EventSubscriber $subscriber): void
+    {
+        $this->removeEventListener($subscriber);
+    }
 
-	/**
-	 * @param string $name
-	 * @param array|\Traversable|null $defaults
-	 * @param string $argsClass
-	 * @param bool $globalDispatchFirst
-	 * @return \Kdyby\Events\Event
-	 */
-	public function createEvent($name, $defaults = [], $argsClass = NULL, $globalDispatchFirst = FALSE)
-	{
-		$event = new Event($name, $defaults, $argsClass);
-		$event->globalDispatchFirst = $globalDispatchFirst;
-		$event->injectEventManager($this);
+    /**
+     * @param string $name
+     * @param array|\Traversable|null $defaults
+     * @param string $argsClass
+     * @param bool $globalDispatchFirst
+     * @return \Kdyby\Events\Event
+     */
+    public function createEvent($name, $defaults = [], $argsClass = NULL, $globalDispatchFirst = FALSE)
+    {
+        $event = new Event($name, $defaults, $argsClass);
+        $event->globalDispatchFirst = $globalDispatchFirst;
+        $event->injectEventManager($this);
 
-		if ($this->panel) {
-			$this->panel->registerEvent($event);
-		}
+        if ($this->panel) {
+            $this->panel->registerEvent($event);
+        }
 
-		return $event;
-	}
+        return $event;
+    }
 
-	private function sortListeners($eventName)
-	{
-		$this->sorted[$eventName] = [];
+    private function sortListeners($eventName)
+    {
+        $this->sorted[$eventName] = [];
 
-		$available = [];
-		[$namespace, $event, $separator] = Event::parseName($eventName);
-		$className = $namespace;
-		do {
-			$key = ($className ? $className . $separator : '') . $event;
-			if (empty($this->listeners[$key])) {
-				continue;
-			}
+        $available = [];
+        [$namespace, $event, $separator] = Event::parseName($eventName);
+        $className = $namespace;
+        do {
+            $key = ($className ? $className . $separator : '') . $event;
+            if (empty($this->listeners[$key])) {
+                continue;
+            }
 
-			$available += array_fill_keys(array_keys($this->listeners[$key]), []);
-			foreach ($this->listeners[$key] as $priority => $listeners) {
-				foreach ($listeners as $listener) {
-					if ($className === $namespace && in_array($listener, $available[$priority], TRUE)) {
-						continue;
-					}
+            $available += array_fill_keys(array_keys($this->listeners[$key]), []);
+            foreach ($this->listeners[$key] as $priority => $listeners) {
+                foreach ($listeners as $listener) {
+                    if ($className === $namespace && in_array($listener, $available[$priority], TRUE)) {
+                        continue;
+                    }
 
-					$available[$priority][] = $listener;
-				}
-			}
+                    $available[$priority][] = $listener;
+                }
+            }
 
-		} while ($className && class_exists($className) && ($className = get_parent_class($className)));
+        } while ($className && class_exists($className) && ($className = get_parent_class($className)));
 
-		if (empty($available)) {
-			return;
-		}
+        if (empty($available)) {
+            return;
+        }
 
-		krsort($available); // [priority => [[listener, ...], ...]
-		$sorted = array_merge(...$available);
+        krsort($available); // [priority => [[listener, ...], ...]
+        $sorted = array_merge(...$available);
 
-		$this->sorted[$eventName] = array_map(static function ($callable) use ($event) {
-			if ($callable instanceof EventSubscriber) {
-				return $callable;
-			}
+        $this->sorted[$eventName] = array_map(static function ($callable) use ($event) {
+            if ($callable instanceof EventSubscriber) {
+                return $callable;
+            }
 
-			if (is_object($callable) && method_exists($callable, $event)) {
-				$callable = [$callable, $event];
-			}
+            if (is_object($callable) && method_exists($callable, $event)) {
+                $callable = [$callable, $event];
+            }
 
-			return $callable;
-		}, $sorted); // [callback, ...]
-	}
+            return $callable;
+        }, $sorted); // [callback, ...]
+    }
 
 }
